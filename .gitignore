@@ -13,6 +13,7 @@
 # Machine-local files inside allowed dirs
 zsh/local.zsh
 zsh/machine.zsh
+zsh/.zsh_history*
 zsh/.zcompdump*
 zsh/.zsh_sessions/
 git/local

@@ -8,6 +8,8 @@ path=("$HOME/.local/bin" "$HOME/.atuin/bin" "$HOME/.fzf/bin" $path)
 
 # ── oh-my-zsh ───────────────────────────────────────────────────────────────
 export ZSH="$HOME/.oh-my-zsh"
+# macOS /etc/zshrc would put history in $ZDOTDIR (the git repo): keep it in $HOME
+HISTFILE="$HOME/.zsh_history"
 ZSH_THEME="robbyrussell"
 ZSH_COMPDUMP="${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompdump-${HOST%%.*}"
 [[ -d ${ZSH_COMPDUMP:h} ]] || mkdir -p "${ZSH_COMPDUMP:h}"
