@@ -47,7 +47,9 @@ paths_for() {  # paths_for nas|stick → prints one folder per line (same rules 
   return 0
 }
 list_for() { local a=(); while IFS= read -r l; do a+=("$l"); done < <(paths_for "$1"); printf '%s\n' "${a[@]}"; }
-r()        { "$B" "$1" -- "${@:2}"; }                       # restic on a repository
+# restic on a repository. stdin from /dev/null: restic must never see the terminal,
+# otherwise it hands the tty to its ssh child and a concurrent fzf gets suspended.
+r()        { "$B" "$1" -- "${@:2}" < /dev/null; }
 last_of()  { local ts; ts=$(cat "$STATE/last-$1" 2>/dev/null || echo 0); (( ts > 0 )) && date -r "$ts" '+%Y-%m-%d %H:%M' || echo never; }
 job_state(){ launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 && echo loaded || echo "not installed"; }
 
@@ -295,8 +297,10 @@ s = json.load(sys.stdin); print(max(s, key=lambda x: x["time"])["short_id"] if s
           --preview='printf "%s\nsize:      %s\nmodified:  %s\n" {1} {3} {4}' --preview-window=down,3,wrap < "$cache") || return 0
   p=$(cut -f2 <<< "$sel")
   echo "[$f] looking for every version of $(tilde "$p") …" >&2
-  vsel=$(versions_of "$f" "$p" --tsv | fzf --delimiter=$'\t' --with-nth=2 --height=40% --reverse \
-          --prompt="version > " --header="$(tilde "$p") · Enter: restore into ~/Restored · Esc: quit") || return 0
+  local vlist; vlist=$(versions_of "$f" "$p" --tsv) || die "no version found"   # finish restic first …
+  vsel=$(fzf --delimiter=$'\t' --with-nth=2 --height=40% --reverse \
+          --prompt="version > " --header="$(tilde "$p") · Enter: restore into ~/Restored · Esc: quit" \
+          <<< "$vlist") || return 0                                           # … then open the menu
   vsnap=$(cut -f1 <<< "$vsel")
   restore_from "$f" "$vsnap" "$p"
 }
