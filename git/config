@@ -1,0 +1,6 @@
+# XDG git config (~/.config/git/config). Read in addition to ~/.gitconfig.
+[user]
+	name = Ammar Mian
+# Per-machine settings (e.g. user.email) live in ~/.config/git/local, not in git.
+[include]
+	path = local

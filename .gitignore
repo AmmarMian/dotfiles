@@ -1,0 +1,20 @@
+# Allow-list: everything in ~/.config is ignored unless listed below.
+# Add a new tool with:  !toolname/
+/*
+!.gitignore
+!README.md
+!install.sh
+!nvim/
+!zsh/
+!git/
+!btop/
+!atuin/
+
+# Machine-local files inside allowed dirs
+zsh/local.zsh
+zsh/machine.zsh
+zsh/.zcompdump*
+zsh/.zsh_sessions/
+git/local
+atuin/*
+!atuin/config.toml
