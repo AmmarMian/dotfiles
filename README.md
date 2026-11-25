@@ -65,6 +65,13 @@ Settings are saved per machine in `~/.config/zsh/machine.zsh` (not in git).
 macOS-only shell settings (nvm, TeX Live, Angular CLI, opencode) are in
 `zsh/macos.zsh` and only load on macOS.
 
+## Backups (macOS)
+
+`restic/` — a small CLI (`backup status`, `backup doctor`, `backup restore …`) for
+restic backups to a NAS (daily, automatic) and a USB stick (manual).
+See [restic/README.md](restic/README.md). Personal settings go in the git-ignored
+`restic/config.sh`.
+
 ## Notes
 
 - atuin binds **Ctrl-R** only; the Up arrow keeps the normal per-session history.

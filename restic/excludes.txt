@@ -1,0 +1,14 @@
+# Rebuildable or OS junk — never backed up (folders with a CACHEDIR.TAG are skipped too)
+node_modules
+.venv*
+venv
+__pycache__
+.pytest_cache
+.ipynb_checkpoints
+.ruff_cache
+.mypy_cache
+.next
+.tox
+.DS_Store
+.Trash
+*.tmp

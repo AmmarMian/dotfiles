@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+# backup — restic backups of this Mac to a NAS and a USB stick.
+# Run `backup help` for the commands. Settings live in config.sh next to this file.
+set -uo pipefail
+
+DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd -P)"
+CONFIG="$DIR/config.sh"
+B="$DIR/backup.sh"
+STATE="$HOME/.local/state/restic"
+LOG="$HOME/Library/Logs/restic-backup.log"
+LABEL="local.restic-nas"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+VERSION="1.0"
+
+# ── output helpers ──────────────────────────────────────────────────────────
+if [[ -t 1 ]]; then B1=$'\e[1m' DIM=$'\e[2m' GRN=$'\e[32m' RED=$'\e[31m' YEL=$'\e[33m' OFF=$'\e[0m'
+else B1="" DIM="" GRN="" RED="" YEL="" OFF=""; fi
+h()    { printf '\n%s%s%s\n' "$B1" "$*" "$OFF"; }
+kv()   { printf '  %-18s %s\n' "$1" "$2"; }
+ok()   { printf '  %s✓%s %s\n' "$GRN" "$OFF" "$*"; }
+bad()  { printf '  %s✗%s %s\n' "$RED" "$OFF" "$*"; FAILED=1; }
+warn() { printf '  %s!%s %s\n' "$YEL" "$OFF" "$*"; }
+die()  { printf '%serror:%s %s\n' "$RED" "$OFF" "$*" >&2; exit 1; }
+tilde(){ local s out=(); for s in "$@"; do out+=("${s/#$HOME/~}"); done; printf "%s" "${out[*]}"; }
+
+load_config() {
+  [[ -f $CONFIG ]] || die "no config: $CONFIG (copy config.example.sh to config.sh and edit it)"
+  # shellcheck source=config.example.sh
+  source "$CONFIG"
+}
+
+nas_up()   { /usr/bin/nc -z -G 3 "${NAS_CHECK%:*}" "${NAS_CHECK##*:}" >/dev/null 2>&1; }
+stick_up() { [[ -d $STICK_REPO ]]; }
+names()    { local p out=(); for p in "$@"; do out+=("${p##*/}"); done; echo "${out[*]}"; }
+r()        { "$B" "$1" -- "${@:2}"; }                       # restic on a repository
+last_of()  { local ts; ts=$(cat "$STATE/last-$1" 2>/dev/null || echo 0); (( ts > 0 )) && date -r "$ts" '+%Y-%m-%d %H:%M' || echo never; }
+job_state(){ launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 && echo loaded || echo "not installed"; }
+
+# common options: --from nas|stick, --at YYYY-MM-DD, --all, --to DIR, -n N, -f
+FROM="" AT="" ALL=0 TO="" N=30 FOLLOW=0 ARGS=()
+parse_opts() {
+  while (($#)); do
+    case $1 in
+      --from) FROM=${2:?--from needs nas or stick}; shift 2 ;;
+      --at)   AT=${2:?--at needs a date YYYY-MM-DD}; shift 2 ;;
+      --to)   TO=${2:?--to needs a folder}; shift 2 ;;
+      --all)  ALL=1; shift ;;
+      -n)     N=${2:?}; shift 2 ;;
+      -f)     FOLLOW=1; shift ;;
+      -h|--help) cmd_help "$CMD"; exit 0 ;;
+      -*)     die "unknown option $1 (see: backup help $CMD)" ;;
+      *)      ARGS+=("$1"); shift ;;
+    esac
+  done
+  [[ -z $FROM || $FROM == nas || $FROM == stick ]] || die "--from must be nas or stick"
+}
+pick_from() {
+  if [[ -n $FROM ]]; then echo "$FROM"; elif nas_up; then echo nas; elif stick_up; then echo stick
+  else die "neither the NAS (${NAS_CHECK}) nor the stick ($STICK_VOLUME) is reachable"; fi
+}
+snap_for() {   # latest snapshot on or before --at DATE, else "latest"
+  [[ -z $AT ]] && { echo latest; return; }
+  r "$1" snapshots --json 2>/dev/null | /usr/bin/python3 -I -c '
+import sys, json
+s = [x for x in json.load(sys.stdin) if x["time"][:10] <= sys.argv[1]]
+print(max(s, key=lambda x: x["time"])["short_id"] if s else "")' "$AT"
+}
+abspath() { /usr/bin/python3 -I -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$1"; }
+
+# ── commands ────────────────────────────────────────────────────────────────
+cmd_status() {
+  load_config
+  printf '\n%s%-7s %-11s %-18s %-10s %s%s\n' "$B1" WHERE REACHABLE "LAST BACKUP" SNAPSHOTS CONTAINS "$OFF"
+  local t up n what
+  for t in nas stick; do
+    up=no; if [[ $t == nas ]]; then nas_up && up=yes; else stick_up && up=yes; fi
+    n="-"; [[ $up == yes ]] && n=$(r $t snapshots --json 2>/dev/null | /usr/bin/python3 -I -c 'import sys,json; print(len(json.load(sys.stdin)))' 2>/dev/null || echo "?")
+    what=$(names "${WORK_PATHS[@]}"); [[ $t == stick ]] && what="$what $(names "${STICK_EXTRA_PATHS[@]}")"
+    printf '%-7s %-11s %-18s %-10s %s\n' "$t" "$up" "$(last_of $t)" "$n" "$what"
+  done
+  for t in nas stick; do
+    [[ -f $STATE/progress-$t.json ]] || continue
+    /usr/bin/python3 -I - "$STATE/progress-$t.json" "$t" <<'PY'
+import sys, json, time
+m = json.load(open(sys.argv[1])); G = 2**30
+if time.time() - m.get("updated", 0) > 300:
+    print(f"\n{sys.argv[2]}: a backup was interrupted (no progress for 5+ min); it will be retried."); sys.exit()
+rem = m.get("seconds_remaining"); eta = f", ~{rem//60} min left" if rem else ""
+print(f"\n▶ {sys.argv[2]} backup in progress: {100*m.get('percent_done',0):.0f}% "
+      f"({m.get('bytes_done',0)/G:.1f} / {m.get('total_bytes',0)/G:.1f} GB, "
+      f"{m.get('files_done',0)} / {m.get('total_files',0)} files{eta})")
+PY
+  done
+  echo
+  echo "Scheduled NAS backup: $(job_state) (daily when reachable). Stick: backup stick."
+  [[ -n ${STATUS_NOTE:-} ]] && echo "$STATUS_NOTE"
+  [[ -n ${MAP_FILE:-} ]] && echo "Where is what: $(tilde "$MAP_FILE")"
+  return 0
+}
+
+cmd_config() {
+  load_config
+  [[ ${ARGS[0]:-} == edit ]] && exec "${EDITOR:-vi}" "$CONFIG"
+  h "Files"
+  kv "config"       "$(tilde "$CONFIG")   (edit: backup config edit)"
+  kv "template"     "$(tilde "$DIR/config.example.sh")"
+  kv "excludes"     "$(tilde "$DIR/excludes.txt")"
+  kv "log"          "$(tilde "$LOG")"
+  kv "state"        "$(tilde "$STATE")/"
+  kv "scripts"      "$(tilde "$DIR")/"
+  h "NAS"
+  kv "repository"   "sftp:$NAS_SSH:$NAS_REPO"
+  kv "ssh alias"    "$NAS_SSH  ($(ssh -G "$NAS_SSH" 2>/dev/null | awk '/^user /{u=$2} /^hostname /{h=$2} END{print u"@"h}'), see ~/.ssh/config)"
+  kv "reachability" "$NAS_CHECK"
+  kv "backs up"     "$(tilde "${WORK_PATHS[@]}")"
+  h "Stick"
+  kv "volume"       "$STICK_VOLUME"
+  kv "repository"   "$STICK_REPO"
+  kv "backs up"     "$(tilde "${WORK_PATHS[@]}" "${STICK_EXTRA_PATHS[@]}")"
+  h "Policy"
+  kv "retention"    "${KEEP[*]}"
+  kv "schedule"     "NAS: hourly check, backup if last >24h ($(job_state); $(tilde "$PLIST"))"
+  kv "maintenance"  "weekly prune + check of 5% of the data"
+  kv "reminders"    "shell warns after ${REMIND_DAYS_NAS:-3} days (NAS) / ${REMIND_DAYS_STICK:-14} days (stick)"
+  kv "password"     "macOS Keychain, service \"${KEYCHAIN_SERVICE:-restic-backup}\", account \"$USER\""
+  kv "restic"       "$({ "${HOME}/.local/bin/restic" version 2>/dev/null || restic version 2>/dev/null; } | awk '{print $1, $2}')"
+  [[ -n ${MAP_FILE:-} ]] && { h "Map"; kv "where is what" "$(tilde "$MAP_FILE")"; }
+  echo
+}
+
+cmd_doctor() {
+  FAILED=0
+  h "Checks"
+  if [[ -x $HOME/.local/bin/restic ]] || command -v restic >/dev/null; then ok "restic installed"; else bad "restic not found"; fi
+  if [[ -f $CONFIG ]]; then ok "config: $(tilde "$CONFIG")"; source "$CONFIG"; else bad "no config.sh"; echo; return 1; fi
+  if security find-generic-password -s "${KEYCHAIN_SERVICE:-restic-backup}" -a "$USER" >/dev/null 2>&1; then ok "password in Keychain"
+  else bad "no Keychain item \"${KEYCHAIN_SERVICE:-restic-backup}\""; fi
+  if nas_up; then
+    ok "NAS reachable ($NAS_CHECK)"
+    if ssh -n -o BatchMode=yes -o ConnectTimeout=8 -o IdentityAgent=none "$NAS_SSH" true 2>/dev/null; then ok "ssh $NAS_SSH works without the agent (survives reboots)"
+    else bad "ssh $NAS_SSH needs the agent — run: ssh-add --apple-use-keychain <key>"; fi
+    if r nas cat config >/dev/null 2>&1; then ok "NAS repository opens"; else bad "cannot open NAS repository"; fi
+  else warn "NAS not reachable now ($NAS_CHECK) — VPN?"; fi
+  if stick_up; then
+    if r stick cat config >/dev/null 2>&1; then ok "stick repository opens"; else bad "cannot open stick repository"; fi
+  else warn "stick not plugged in ($STICK_VOLUME)"; fi
+  if [[ $(job_state) == loaded ]]; then ok "scheduled job $LABEL loaded"; else bad "scheduled job not installed — run $(tilde "$DIR")/install.sh"; fi
+  local t last max
+  for t in nas stick; do
+    max=${REMIND_DAYS_NAS:-3}; [[ $t == stick ]] && max=${REMIND_DAYS_STICK:-14}
+    last=$(cat "$STATE/last-$t" 2>/dev/null || echo 0)
+    if (( last == 0 )); then warn "$t: never backed up"
+    elif (( ($(date +%s) - last) / 86400 > max )); then warn "$t: last backup $(last_of $t), older than $max days"
+    else ok "$t: last backup $(last_of $t)"; fi
+  done
+  if grep -q 'BACKUP FAILED\|MAINTENANCE PROBLEM' <(tail -200 "$LOG" 2>/dev/null); then warn "recent failure in the log — backup log"; fi
+  echo; return $FAILED
+}
+
+cmd_now()   { load_config; "$B" "${ARGS[0]:-nas}"; }
+cmd_stick() { exec "$DIR/backup-stick"; }
+cmd_log()   { [[ $FOLLOW == 1 ]] && exec tail -n "$N" -f "$LOG"; tail -n "$N" "$LOG"; }
+
+cmd_snapshots() { load_config; local f; f=$(pick_from); echo "[$f]"; r "$f" snapshots --compact; }
+
+cmd_find() {
+  load_config; [[ ${#ARGS[@]} -ge 1 ]] || die "usage: backup find <pattern> [--all] [--from nas|stick]"
+  local f; f=$(pick_from); echo "[$f] searching '${ARGS[0]}' …"
+  if [[ $ALL == 1 ]]; then r "$f" find "${ARGS[0]}"; else r "$f" find --snapshot latest "${ARGS[0]}"; fi
+}
+
+cmd_ls() {
+  load_config; [[ ${#ARGS[@]} -ge 1 ]] || die "usage: backup ls <folder> [--at DATE] [--from nas|stick]"
+  local f s p; f=$(pick_from); s=$(snap_for "$f"); [[ -n $s ]] || die "no snapshot on or before $AT"
+  p=$(abspath "${ARGS[0]}"); echo "[$f] snapshot $s: $(tilde "$p")"
+  r "$f" ls "$s" "$p"
+}
+
+cmd_restore() {
+  load_config; [[ ${#ARGS[@]} -ge 1 ]] || die "usage: backup restore <path> [--at DATE] [--from nas|stick] [--to DIR]"
+  local f s p dest; f=$(pick_from); s=$(snap_for "$f"); [[ -n $s ]] || die "no snapshot on or before $AT"
+  p=$(abspath "${ARGS[0]}"); dest=${TO:-$HOME/Restored/$(date '+%Y-%m-%d_%H%M%S')}
+  [[ -e $dest/${p#/} ]] && die "$dest$p already exists — choose another --to"
+  echo "[$f] restoring $(tilde "$p") from snapshot $s into $(tilde "$dest") …"
+  r "$f" restore "$s" --include "$p" --target "$dest" || exit 1
+  echo; echo "Restored to: $(tilde "$dest$p")"
+  echo "Nothing was overwritten. Compare, then move back what you need."
+  open -R "$dest$p" 2>/dev/null || true
+}
+
+cmd_help() {
+  case ${1:-} in
+    status)    echo "backup status — reachability, last backup, snapshot count and live progress for each destination." ;;
+    config)    echo "backup config [edit] — show the active settings and where everything is stored; 'edit' opens config.sh." ;;
+    doctor)    echo "backup doctor — check restic, config, Keychain password, ssh, repositories, schedule and backup age." ;;
+    now)       echo "backup now [nas|stick] — run a backup now (default: nas)." ;;
+    stick)     echo "backup stick — back up to the stick, show the result, offer to eject (same as backup-stick)." ;;
+    snapshots) echo "backup snapshots [--from nas|stick] — list snapshots." ;;
+    find)      echo "backup find <pattern> [--all] [--from nas|stick] — find files by name ('*thesis*.tex'). --all searches every snapshot." ;;
+    ls)        echo "backup ls <folder> [--at YYYY-MM-DD] [--from nas|stick] — list a folder as it was in a backup." ;;
+    restore)   echo "backup restore <path> [--at YYYY-MM-DD] [--from nas|stick] [--to DIR] — restore into ~/Restored/<date>/ (or DIR). Never overwrites." ;;
+    log)       echo "backup log [-n N] [-f] — show the last N lines of the log (-f: follow)." ;;
+    *) cat <<EOF
+${B1}backup${OFF} $VERSION — restic backups of this Mac (NAS + USB stick)
+
+${B1}Overview${OFF}
+  status              destinations, last backup, progress
+  config [edit]       active settings and where they are stored
+  doctor              check that everything works
+  log [-n N] [-f]     backup log
+
+${B1}Back up${OFF}
+  now [nas|stick]     back up now (default: nas)
+  stick               back up to the stick, then eject
+
+${B1}Find & restore${OFF}
+  snapshots           list snapshots
+  find <pattern>      find files by name        [--all]
+  ls <folder>         browse a folder           [--at DATE]
+  restore <path>      restore a file or folder  [--at DATE] [--to DIR]
+
+  Common options: --from nas|stick (default: NAS if reachable, else stick)
+  ${DIM}backup help <command> for details · docs: $(tilde "$DIR")/README.md${OFF}
+EOF
+  esac
+}
+
+# ── dispatch ────────────────────────────────────────────────────────────────
+CMD=${1:-status}; shift || true
+case $CMD in
+  -h|--help) CMD=help ;;
+  -V|--version) echo "backup $VERSION"; exit 0 ;;
+esac
+parse_opts "$@"
+case $CMD in
+  status|config|doctor|now|stick|snapshots|find|ls|restore|log) "cmd_$CMD" ;;
+  help) cmd_help "${ARGS[0]:-}" ;;
+  *) die "unknown command '$CMD' (see: backup help)" ;;
+esac

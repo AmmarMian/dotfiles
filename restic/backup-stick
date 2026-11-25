@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Plug the backup stick in, run `backup-stick`, done.
+set -uo pipefail
+DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd -P)"
+source "$DIR/config.sh" || exit 2
+if [[ ! -d $STICK_VOLUME ]]; then echo "Plug in the backup stick first ($STICK_VOLUME)."; exit 1; fi
+"$DIR/backup.sh" stick || { echo "Backup failed — see ~/Library/Logs/restic-backup.log"; exit 1; }
+echo
+"$DIR/backup.sh" stick -- snapshots --latest 3 --compact 2>/dev/null | tail -6
+echo
+read -r -p "Eject the stick now? [Y/n] " a
+if [[ ${a:-y} =~ ^[Yy]$ ]]; then
+  diskutil eject "$STICK_VOLUME" && echo "Ejected — you can unplug it."
+fi
