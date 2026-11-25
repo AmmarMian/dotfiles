@@ -1,0 +1,61 @@
+#compdef backup
+# zsh completion for the `backup` CLI (~/.config/restic/backup)
+
+_backup_folders_in_list() {
+  local f=${PATHS_FILE:-$HOME/.config/restic/paths.txt} where p
+  local -a items
+  [[ -f $f ]] || return 1
+  while read -r where p; do
+    [[ -z $where || $where == \#* ]] && continue
+    items+=("${p}:${where}")
+  done < $f
+  _describe -t folders 'backed-up folder' items
+}
+
+_backup() {
+  local -a commands
+  commands=(
+    'status:destinations, last backup, live progress'
+    'config:active settings and where they are stored'
+    'doctor:check that everything works'
+    'log:show the backup log'
+    'now:back up now'
+    'stick:back up to the stick, then eject'
+    'paths:folders that are backed up'
+    'add:back up a folder too'
+    'remove:stop backing up a folder'
+    'search:fuzzy-find a file, pick a version, restore'
+    'versions:versions of a file kept in the backups'
+    'snapshots:list snapshots'
+    'find:find files by name'
+    'ls:browse a folder as it was in a backup'
+    'restore:restore a file or folder'
+    'help:help on a command'
+  )
+  local from='--from[repository to use]:repository:(nas stick)'
+  local at='--at[latest snapshot on or before this date]:date (YYYY-MM-DD):'
+  local only='--only[only on one side]:side:(nas stick)'
+
+  if (( CURRENT == 2 )); then
+    _describe -t commands 'backup command' commands
+    return
+  fi
+  local cmd=$words[2]
+  curcontext="${curcontext%:*:*}:backup-$cmd:"
+  case $cmd in
+    config)    _arguments '2:action:(edit)' ;;
+    now)       _arguments '2:target:(nas stick)' ;;
+    log)       _arguments '-n[number of lines]:lines:' '-f[follow]' ;;
+    snapshots) _arguments $from ;;
+    find)      _arguments $from '--all[search every snapshot]' '2:file name pattern:' ;;
+    search)    _arguments $from '2:initial search text:' ;;
+    versions)  _arguments $from '2:file:_files' ;;
+    ls)        _arguments $from $at '2:folder:_files -/' ;;
+    restore)   _arguments $from $at '--to[restore into this folder]:folder:_files -/' '2:file or folder:_files' ;;
+    add)       _arguments $only '2:folder:_files -/' ;;
+    remove)    _arguments $only '2:folder:_backup_folders_in_list' ;;
+    help)      _describe -t commands 'command' commands ;;
+  esac
+}
+
+_backup "$@"

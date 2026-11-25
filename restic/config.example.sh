@@ -13,6 +13,8 @@ STICK_VOLUME="/Volumes/BACKUP"
 STICK_REPO="$STICK_VOLUME/restic-mac"
 
 # --- What to back up --------------------------------------------------------
+# Preferably in paths.txt (template: paths.example.txt), managed with
+# `backup add` / `backup remove` / `backup paths`. Used only without paths.txt:
 WORK_PATHS=("$HOME/Research" "$HOME/Teaching")  # → NAS and stick
 STICK_EXTRA_PATHS=("$HOME/Personal")            # → stick only
 

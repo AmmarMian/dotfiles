@@ -1,0 +1,7 @@
+# Folders to back up — one per line:  <where> <folder>
+#   where = both | nas | stick
+# Copy to paths.txt (git-ignored), or manage it with:
+#   backup add <folder> [--only nas|stick]   ·   backup remove <folder> [--only nas|stick]   ·   backup paths
+both   ~/Research
+both   ~/Teaching
+stick  ~/Personal

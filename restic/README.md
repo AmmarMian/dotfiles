@@ -21,7 +21,12 @@ backup log [-n N] [-f]      backup log
 
 backup now [nas|stick]      back up now (default: nas)
 backup stick                back up to the stick, show the result, offer to eject
+backup paths                folders that are backed up, and where to
+backup add <folder>         back up a folder too         [--only nas|stick]
+backup remove <folder>      stop backing up a folder     [--only nas|stick]
 
+backup search [text]        fuzzy-find a file in the latest backup (fzf), pick a version, restore
+backup versions <file>      distinct versions of a file kept in the backups
 backup snapshots            list snapshots
 backup find <pattern>       find files by name          [--all: every snapshot]
 backup ls <folder>          a folder as it was           [--at YYYY-MM-DD]
@@ -29,6 +34,8 @@ backup restore <path>       restore a file or folder     [--at DATE] [--to DIR]
 
 common option: --from nas|stick   (default: the NAS if reachable, else the stick)
 ```
+
+Tab completion (zsh): `zsh/completions/_backup` in these dotfiles.
 
 `backup restore` never overwrites: files go to `~/Restored/<date>/<original path>`
 (or `--to DIR`), Finder opens there, and you move back what you need.
@@ -41,11 +48,14 @@ common option: --from nas|stick   (default: the NAS if reachable, else the stick
 | `backup.sh` | one backup run: `backup.sh nas\|stick [--if-due]`, or `backup.sh nas -- <restic args>` | yes |
 | `backup-stick` | stick backup + eject (`~/.local/bin/backup-stick`) | yes |
 | `progress_filter.py` | turns `restic --json` into a progress file + log summary | yes |
+| `versions.py` | file index and version grouping for `search` / `versions` | yes |
 | `excludes.txt` | never backed up: `node_modules`, venvs, caches, `.DS_Store`… | yes |
 | `restic-nas.plist.template` | launchd job, filled in by `install.sh` | yes |
 | `install.sh` | links the commands, installs the launchd job (`--uninstall` too) | yes |
 | `config.example.sh` | template for your settings | yes |
-| **`config.sh`** | **your hosts, paths, folders, retention** | **no (git-ignored)** |
+| `paths.example.txt` | template for the folder list | yes |
+| **`config.sh`** | **your hosts, repository paths, retention** | **no (git-ignored)** |
+| **`paths.txt`** | **folders to back up: `both\|nas\|stick <folder>` per line** | **no (git-ignored)** |
 
 Outside the repo: password in the macOS Keychain, log in
 `~/Library/Logs/restic-backup.log`, state (last backup, progress) in
@@ -55,7 +65,8 @@ Outside the repo: password in the macOS Keychain, log in
 
 ```sh
 brew install restic                                  # or the official binary in ~/.local/bin
-cp config.example.sh config.sh && $EDITOR config.sh  # hosts, paths, folders
+cp config.example.sh config.sh && $EDITOR config.sh  # hosts, repository paths
+cp paths.example.txt paths.txt                       # or: backup add <folder> later
 
 # repository password (type it; also keep it in a password manager!)
 security add-generic-password -s restic-backup -a "$USER" -T /usr/bin/security -w
@@ -87,8 +98,9 @@ backup doctor
   only if the last *successful* NAS backup is more than 24 h old and the NAS
   answers on `NAS_CHECK`; otherwise it exits silently and tries again an hour
   later. A Mac that was asleep or off the VPN catches up at the next chance.
-- **Retention.** After each backup, `restic forget` with `KEEP` (default: 14
-  daily, 8 weekly, 24 monthly, 5 yearly). Snapshots tagged `keep` are never
+- **Retention.** After each backup, `restic forget --group-by host` with `KEEP`
+  (default: 14 daily, 8 weekly, 24 monthly, 5 yearly). Grouping by host means
+  adding or removing a folder does not split the history. Snapshots tagged `keep` are never
   removed: `backup.sh nas -- tag --add keep <snapshot-id>`.
 - **Maintenance.** At most weekly: `restic prune` and `restic check
   --read-data-subset=5%`. For a full check: `backup.sh nas -- check --read-data`.

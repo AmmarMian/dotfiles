@@ -19,5 +19,6 @@ zsh/.zcompdump*
 zsh/.zsh_sessions/
 git/local
 restic/config.sh
+restic/paths.txt
 atuin/*
 !atuin/config.toml

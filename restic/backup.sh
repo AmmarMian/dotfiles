@@ -24,9 +24,24 @@ LOG="$HOME/Library/Logs/restic-backup.log"
 export RESTIC_PASSWORD_COMMAND="/usr/bin/security find-generic-password -s ${KEYCHAIN_SERVICE:-restic-backup} -a $USER -w"
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
+# Folders: paths.txt ("both|nas|stick <folder>" per line; managed by `backup add/remove`),
+# or the WORK_PATHS / STICK_EXTRA_PATHS arrays of config.sh if there is no paths.txt.
+PATHS_FILE="${PATHS_FILE:-$DIR/paths.txt}"
+paths_for() {  # paths_for nas|stick  → fills PATHS
+  PATHS=()
+  if [[ -f $PATHS_FILE ]]; then
+    local where p
+    while read -r where p; do
+      [[ -z $where || $where == \#* ]] && continue
+      [[ $where == both || $where == "$1" ]] && PATHS+=("${p/#\~/$HOME}")
+    done < "$PATHS_FILE"
+  else
+    PATHS=("${WORK_PATHS[@]}"); [[ $1 == stick ]] && PATHS+=("${STICK_EXTRA_PATHS[@]}")
+  fi
+}
 case $TARGET in
-  nas)   export RESTIC_REPOSITORY="sftp:$NAS_SSH:$NAS_REPO"; PATHS=("${WORK_PATHS[@]}") ;;
-  stick) export RESTIC_REPOSITORY="$STICK_REPO";             PATHS=("${WORK_PATHS[@]}" "${STICK_EXTRA_PATHS[@]}") ;;
+  nas)   export RESTIC_REPOSITORY="sftp:$NAS_SSH:$NAS_REPO"; paths_for nas ;;
+  stick) export RESTIC_REPOSITORY="$STICK_REPO";             paths_for stick ;;
   *) sed -n '2,12p' "$0"; exit 2 ;;
 esac
 
@@ -70,7 +85,7 @@ date +%s > "$STATE/last-$TARGET"
 log "backup done"
 
 # Retention every run (cheap); prune + partial integrity check at most weekly.
-"$RESTIC" forget "${KEEP[@]}" >>"$LOG" 2>&1 || log "forget failed (non-fatal)"
+"$RESTIC" forget --group-by host "${KEEP[@]}" >>"$LOG" 2>&1 || log "forget failed (non-fatal)"
 if (( $(age_h "maint-$TARGET") >= 24*7 )); then
   log "weekly maintenance: prune + check 5% of data"
   if "$RESTIC" prune >>"$LOG" 2>&1 && "$RESTIC" check --read-data-subset=5% >>"$LOG" 2>&1; then
