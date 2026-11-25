@@ -26,8 +26,11 @@ _machine_defaults() {
 }
 
 _machine_render() {
-  local name=${MACHINE_NAME//\%/%%} icon=${MACHINE_ICON//\%/%%}
-  _machine_seg="%B%F{$MACHINE_COLOR}${icon}${icon:+ }${name}%f%b "
+  local name=${MACHINE_NAME//\%/%%} icon=${MACHINE_ICON//\%/%%} picon
+  # Emoji with variation selector U+FE0F (⛩️ 🗄️ ☁️ ...) are drawn 2 columns
+  # wide but zsh counts them as 1: declare the width so the cursor stays put.
+  if [[ $icon == *$'️'* ]]; then picon="%{${icon}%2G%}"; else picon=$icon; fi
+  _machine_seg="%B%F{$MACHINE_COLOR}${picon}${icon:+ }${name}%f%b "
   # oh-my-zsh tab/window title (lib/termsupport.zsh)
   ZSH_THEME_TERM_TAB_TITLE_IDLE="${icon}${icon:+ }${name}: %15<..<%~%<<"
   ZSH_THEME_TERM_TITLE_IDLE="${icon}${icon:+ }${name}: %~"
