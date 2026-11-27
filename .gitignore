@@ -10,6 +10,7 @@
 !btop/
 !atuin/
 !restic/
+!ipython-profile/
 
 # Machine-local files inside allowed dirs
 zsh/local.zsh

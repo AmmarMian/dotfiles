@@ -62,8 +62,13 @@ step "Linking config"
 if [[ "$(cd "$CONFIG" && pwd -P)" == "$DOTFILES" ]]; then
   ok "repo is $CONFIG itself, nothing to link"
 else
-  for d in nvim zsh git btop; do link "$DOTFILES/$d" "$CONFIG/$d"; done
+  for d in nvim zsh git btop ipython-profile; do link "$DOTFILES/$d" "$CONFIG/$d"; done
 fi
+
+# IPython reads its config from ~/.ipython, not ~/.config: link the one file.
+# (The folder is not named "ipython": IPython warns about a legacy ~/.config/ipython.)
+mkdir -p "$HOME/.ipython/profile_default"
+link "$CONFIG/ipython-profile/ipython_config.py" "$HOME/.ipython/profile_default/ipython_config.py"
 
 write_file "$HOME/.zshenv" '# Managed by dotfiles/install.sh — real config is in ~/.config/zsh
 export ZDOTDIR="$HOME/.config/zsh"

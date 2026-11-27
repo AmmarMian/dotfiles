@@ -1,6 +1,6 @@
 # dotfiles
 
-zsh (oh-my-zsh, zoxide, atuin, fzf-tab), Neovim (LazyVim), git and btop config,
+zsh (oh-my-zsh, zoxide, atuin, fzf-tab), Neovim (LazyVim), git, btop and IPython config,
 for a macOS laptop and Linux servers (no sudo needed).
 
 On the Mac this repo **is** `~/.config`. On servers it is cloned to `~/.dotfiles`
@@ -17,7 +17,9 @@ machine icon 🚀 && machine name gpu-box    # optional, see below
 
 `install.sh` puts everything under `$HOME`:
 
-- links `~/.config/{nvim,zsh,git,btop}` to the repo and writes `~/.zshenv`
+- links `~/.config/{nvim,zsh,git,btop,ipython-profile}` to the repo and writes `~/.zshenv`;
+  links `~/.ipython/profile_default/ipython_config.py` to `ipython-profile/ipython_config.py`
+  (history and the rest of `~/.ipython` stay per machine)
   (`ZDOTDIR=~/.config/zsh`); existing files are moved to `*.bak.<date>`
 - clones oh-my-zsh + fzf-tab, zsh-autosuggestions, fast-syntax-highlighting
 - installs zoxide, fzf, atuin, ripgrep, fd, uv and Neovim (pinned version) into
